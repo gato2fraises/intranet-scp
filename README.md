@@ -379,3 +379,4 @@ Pour toute question ou bug, consultez la documentation ou modifiez directement l
 **Version** : 1.0.0  
 **Dernière mise à jour** : 2024-02-01  
 **Status** : Production-ready
+# intranet-scp
