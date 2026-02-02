@@ -12,7 +12,7 @@ const MAX_MESSAGES_PER_DAY = 50
 const PRIORITY_LEVELS = ['information', 'alerte', 'critique']
 const FOLDERS = ['inbox', 'sent', 'drafts', 'archived', 'trash']
 
-// Get inbox messages (paginated)
+// Get inbox messages (paginated) - NEW: from mailboxes table
 router.get('/inbox', async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 0
@@ -29,21 +29,22 @@ router.get('/inbox', async (req: Request, res: Response) => {
 
     const messages = await queryAsync<any>(
       `SELECT 
-        m.id, m.sender_id, m.recipient_id, m.subject, m.body, 
-        m.is_read, m.archived, m.priority, m.folder, m.sender_alias,
-        m.thread_id, m.created_at, m.updated_at,
+        m.id, m.sender_id, m.subject, m.body, 
+        mb.is_read, mb.archived, m.priority, mb.folder, m.sender_alias,
+        m.thread_id, mb.created_at,
         u.username as sender_username
-       FROM messages m
+       FROM mailboxes mb
+       JOIN messages m ON m.id = mb.message_id
        JOIN users u ON m.sender_id = u.id
-       WHERE m.recipient_id = ? AND m.folder = ? AND m.deleted = 0
-       ORDER BY m.created_at DESC
+       WHERE mb.user_id = ? AND mb.folder = ? AND mb.deleted = 0
+       ORDER BY mb.created_at DESC
        LIMIT ? OFFSET ?`,
       [req.user!.id, folder, MESSAGES_PER_PAGE, offset]
     )
 
     const totalResult = await getAsync<any>(
-      `SELECT COUNT(*) as total FROM messages 
-       WHERE recipient_id = ? AND folder = ? AND deleted = 0`,
+      `SELECT COUNT(*) as total FROM mailboxes 
+       WHERE user_id = ? AND folder = ? AND deleted = 0`,
       [req.user!.id, folder]
     )
 
@@ -68,13 +69,13 @@ router.get('/inbox', async (req: Request, res: Response) => {
   }
 })
 
-// Get all folders with counts
+// Get all folders with counts - NEW: from mailboxes table
 router.get('/folders', async (req: Request, res: Response) => {
   try {
     const folders = await queryAsync<any>(
       `SELECT folder, COUNT(*) as count 
-       FROM messages 
-       WHERE recipient_id = ? AND deleted = 0 
+       FROM mailboxes 
+       WHERE user_id = ? AND deleted = 0 
        GROUP BY folder`,
       [req.user!.id]
     )
@@ -90,12 +91,12 @@ router.get('/folders', async (req: Request, res: Response) => {
   }
 })
 
-// Get unread count
+// Get unread count - NEW: from mailboxes table
 router.get('/unread-count', async (req: Request, res: Response) => {
   try {
     const result = await getAsync<any>(
-      `SELECT COUNT(*) as unread FROM messages 
-       WHERE recipient_id = ? AND is_read = 0 AND deleted = 0 AND folder != 'trash'`,
+      `SELECT COUNT(*) as unread FROM mailboxes 
+       WHERE user_id = ? AND is_read = 0 AND deleted = 0 AND folder != 'trash'`,
       [req.user!.id]
     )
     res.json({ unread: result?.unread || 0 })
@@ -104,17 +105,27 @@ router.get('/unread-count', async (req: Request, res: Response) => {
   }
 })
 
-// Get single message
+// Get single message - NEW: check both sender and recipient in mailboxes
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const msgId = parseInt(req.params.id)
     
+    // Check if user has access to this message (via mailboxes)
+    const mailbox = await getAsync<any>(
+      `SELECT * FROM mailboxes WHERE message_id = ? AND user_id = ?`,
+      [msgId, req.user!.id]
+    )
+
+    if (!mailbox) {
+      return res.status(404).json({ error: 'Message not found' })
+    }
+
     const message = await getAsync<any>(
       `SELECT m.*, u.username as sender_username
        FROM messages m
        JOIN users u ON m.sender_id = u.id
-       WHERE m.id = ? AND (m.recipient_id = ? OR m.sender_id = ?)`,
-      [msgId, req.user!.id, req.user!.id]
+       WHERE m.id = ?`,
+      [msgId]
     )
 
     if (!message) {
@@ -140,7 +151,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 })
 
-// Send message
+// Send message - NEW: transaction with mailboxes table
 router.post('/send', async (req: Request, res: Response) => {
   try {
     const { recipient_id, subject, body, priority = 'information', sender_alias, attachments = [] } = req.body
@@ -164,8 +175,9 @@ router.post('/send', async (req: Request, res: Response) => {
     const dayStart = new Date()
     dayStart.setHours(0, 0, 0, 0)
     const dailyCount = await getAsync<any>(
-      `SELECT COUNT(*) as count FROM messages 
-       WHERE sender_id = ? AND is_draft = 0 AND created_at > datetime(?, 'localtime')`,
+      `SELECT COUNT(*) as count FROM mailboxes mb
+       JOIN messages m ON m.id = mb.message_id
+       WHERE m.sender_id = ? AND mb.folder = 'sent' AND mb.created_at > datetime(?, 'localtime')`,
       [req.user!.id, dayStart.toISOString()]
     )
 
@@ -192,34 +204,112 @@ router.post('/send', async (req: Request, res: Response) => {
       }
     }
 
-    const msgId = await runAsync(
-      `INSERT INTO messages (sender_id, recipient_id, subject, body, priority, sender_alias, folder)
-       VALUES (?, ?, ?, ?, ?, ?, 'sent')`,
-      [req.user!.id, recipient_id, subject, body, priority, sender_alias || null]
+    // BEGIN TRANSACTION
+    const messageId = await runAsync(
+      `INSERT INTO messages (sender_id, subject, body, priority, sender_alias)
+       VALUES (?, ?, ?, ?, ?)`,
+      [req.user!.id, subject, body, priority, sender_alias || null]
     )
 
-    // Add to recipient's inbox
+    console.log(`✓ Message created: ${messageId}`)
+
+    // Add to sender's sent folder
     await runAsync(
-      `INSERT INTO messages (sender_id, recipient_id, subject, body, priority, sender_alias, folder, thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, 'inbox', ?)`,
-      [req.user!.id, recipient_id, subject, body, priority, sender_alias || null, msgId]
+      `INSERT INTO mailboxes (user_id, message_id, folder, is_read)
+       VALUES (?, ?, 'sent', 1)`,
+      [req.user!.id, messageId]
     )
+
+    console.log(`✓ Added to sender's sent folder`)
+
+    // Add to recipient's inbox folder
+    await runAsync(
+      `INSERT INTO mailboxes (user_id, message_id, folder, is_read)
+       VALUES (?, ?, 'inbox', 0)`,
+      [recipient_id, messageId]
+    )
+
+    console.log(`✓ Added to recipient's inbox folder`)
 
     // Add attachments
     if (attachments && attachments.length > 0) {
       for (const docId of attachments) {
         await runAsync(
           `INSERT INTO message_attachments (message_id, document_id) VALUES (?, ?)`,
-          [msgId, docId]
+          [messageId, docId]
         )
       }
     }
 
     await logAction('MSG_SEND', req.user!.id, `To: user_id ${recipient_id}`, getIpAddress(req))
 
-    res.status(201).json({ id: msgId, message: 'Message sent successfully' })
+    res.status(201).json({ id: messageId, message: 'Message sent successfully' })
   } catch (error) {
-    console.error('Error sending message:', error)
+    console.error('❌ Error sending message:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// Reply to message
+router.post('/:id/reply', async (req: Request, res: Response) => {
+  try {
+    const originalId = parseInt(req.params.id)
+    const { body, priority = 'information' } = req.body
+
+    if (!body) {
+      return res.status(400).json({ error: 'Message body is required' })
+    }
+
+    // Get original message
+    const original = await getAsync<any>(
+      `SELECT m.* FROM messages m
+       JOIN mailboxes mb ON m.id = mb.message_id
+       WHERE m.id = ? AND mb.user_id = ?`,
+      [originalId, req.user!.id]
+    )
+
+    if (!original) {
+      return res.status(404).json({ error: 'Original message not found' })
+    }
+
+    // Determine recipient (if user is recipient, reply to sender; if user is sender, reply to recipient)
+    // Actually in the new model we don't have recipient_id in messages, so check the mailbox folder
+    const mailbox = await getAsync<any>(
+      `SELECT * FROM mailboxes WHERE message_id = ? AND user_id = ?`,
+      [originalId, req.user!.id]
+    )
+
+    // Recipient is the sender of the original message (reply to them)
+    const recipient_id = original.sender_id
+
+    // Create reply message with thread_id
+    const replyId = await runAsync(
+      `INSERT INTO messages (sender_id, subject, body, priority, thread_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [req.user!.id, `RE: ${original.subject}`, body, priority, original.thread_id || originalId]
+    )
+
+    console.log(`✓ Reply created: ${replyId}`)
+
+    // Add to sender's sent folder
+    await runAsync(
+      `INSERT INTO mailboxes (user_id, message_id, folder, is_read)
+       VALUES (?, ?, 'sent', 1)`,
+      [req.user!.id, replyId]
+    )
+
+    // Add to recipient's inbox folder
+    await runAsync(
+      `INSERT INTO mailboxes (user_id, message_id, folder, is_read)
+       VALUES (?, ?, 'inbox', 0)`,
+      [recipient_id, replyId]
+    )
+
+    await logAction('MSG_REPLY', req.user!.id, `To: user_id ${recipient_id}`, getIpAddress(req))
+
+    res.status(201).json({ id: replyId, message: 'Reply sent successfully' })
+  } catch (error) {
+    console.error('❌ Error replying to message:', error)
     res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -255,13 +345,13 @@ router.post('/draft', async (req: Request, res: Response) => {
   }
 })
 
-// Mark as read
+// Mark as read - NEW: update mailboxes table
 router.patch('/:id/read', async (req: Request, res: Response) => {
   try {
     const msgId = parseInt(req.params.id)
     
     await runAsync(
-      `UPDATE messages SET is_read = 1 WHERE id = ? AND recipient_id = ?`,
+      `UPDATE mailboxes SET is_read = 1 WHERE message_id = ? AND user_id = ?`,
       [msgId, req.user!.id]
     )
 
@@ -271,13 +361,13 @@ router.patch('/:id/read', async (req: Request, res: Response) => {
   }
 })
 
-// Mark as unread
+// Mark as unread - NEW: update mailboxes table
 router.patch('/:id/unread', async (req: Request, res: Response) => {
   try {
     const msgId = parseInt(req.params.id)
     
     await runAsync(
-      `UPDATE messages SET is_read = 0 WHERE id = ? AND recipient_id = ?`,
+      `UPDATE mailboxes SET is_read = 0 WHERE message_id = ? AND user_id = ?`,
       [msgId, req.user!.id]
     )
 
@@ -287,7 +377,7 @@ router.patch('/:id/unread', async (req: Request, res: Response) => {
   }
 })
 
-// Move to folder
+// Move to folder - NEW: update mailboxes table
 router.patch('/:id/folder', async (req: Request, res: Response) => {
   try {
     const msgId = parseInt(req.params.id)
@@ -297,35 +387,21 @@ router.patch('/:id/folder', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid folder' })
     }
 
-    // Check ownership
-    const msg = await getAsync<any>(
-      `SELECT * FROM messages WHERE id = ? AND (recipient_id = ? OR sender_id = ?)`,
-      [msgId, req.user!.id, req.user!.id]
+    // Check ownership in mailboxes
+    const mailbox = await getAsync<any>(
+      `SELECT * FROM mailboxes WHERE message_id = ? AND user_id = ?`,
+      [msgId, req.user!.id]
     )
 
-    if (!msg) {
-      return res.status(404).json({ error: 'Message not found' })
+    if (!mailbox) {
+      return res.status(404).json({ error: 'Message not found or permission denied' })
     }
 
-    // For sent/drafts, use sender_id; for inbox/archived/trash, use recipient_id
-    const isOwner = msg.sender_id === req.user!.id && ['sent', 'drafts'].includes(folder)
-                  || msg.recipient_id === req.user!.id && ['inbox', 'archived', 'trash'].includes(folder)
-
-    if (!isOwner && msg.recipient_id === req.user!.id) {
-      // Can move received messages
-      await runAsync(
-        `UPDATE messages SET folder = ? WHERE id = ? AND recipient_id = ?`,
-        [folder, msgId, req.user!.id]
-      )
-    } else if (msg.sender_id === req.user!.id) {
-      // Can move sent messages
-      await runAsync(
-        `UPDATE messages SET folder = ? WHERE id = ? AND sender_id = ?`,
-        [folder, msgId, req.user!.id]
-      )
-    } else {
-      return res.status(403).json({ error: 'Permission denied' })
-    }
+    // Update folder
+    await runAsync(
+      `UPDATE mailboxes SET folder = ? WHERE message_id = ? AND user_id = ?`,
+      [folder, msgId, req.user!.id]
+    )
 
     res.json({ message: 'Message moved' })
   } catch (error) {

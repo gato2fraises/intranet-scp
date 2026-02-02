@@ -7,265 +7,825 @@ interface Document {
   title: string
   body: string
   type: string
-  clearance: number
+  status: 'draft' | 'published' | 'archived'
   author_id: number
-  archived: boolean
+  author_username: string
+  department: string
+  clearance: number
+  tags: string[]
+  version: number
+  created_at: string
+  updated_at: string
+}
+
+interface DocumentVersion {
+  id: number
+  version: number
+  title: string
+  body: string
+  edited_by_username: string
+  change_summary: string
   created_at: string
 }
 
-const Documents: React.FC = () => {
+interface DocumentLog {
+  id: number
+  action: string
+  actor_username: string
+  details: string
+  created_at: string
+}
+
+interface DocumentPermission {
+  id: number
+  permission_type: string
+  target_id: string
+  is_allowed: number
+}
+
+const DOC_TYPES = [
+  'rapport_incident',
+  'rapport_scientifique',
+  'procedure',
+  'note_interne',
+  'document_rh',
+  'journal_garde',
+  'compte_rendu_reunion',
+  'avis_sanction',
+  'directive_site',
+]
+
+const DOC_TYPES_LABELS: Record<string, string> = {
+  rapport_incident: 'Rapport d\'Incident',
+  rapport_scientifique: 'Rapport Scientifique',
+  procedure: 'Procédure',
+  note_interne: 'Note Interne',
+  document_rh: 'Document RH',
+  journal_garde: 'Journal de Garde',
+  compte_rendu_reunion: 'Compte-rendu de Réunion',
+  avis_sanction: 'Avis de Sanction',
+  directive_site: 'Directive de Site',
+}
+
+const CLEARANCE_LEVELS = [
+  { value: 0, label: '0 - Public' },
+  { value: 1, label: '1 - Restreint' },
+  { value: 2, label: '2 - Confidentiel' },
+  { value: 3, label: '3 - Hautement Confidentiel' },
+  { value: 4, label: '4 - O5' },
+  { value: 5, label: '5 - O5 Supreme' },
+  { value: 6, label: '6 - Administrateur' },
+]
+
+const DEPARTMENTS = ['general', 'securite', 'recherche', 'administratif', 'medical', 'direction']
+
+const DocumentsPage: React.FC = () => {
+  const { user } = useAuth()
   const [documents, setDocuments] = useState<Document[]>([])
-  const [selectedDoc, setSelectedDoc] = useState<number | null>(null)
+  const [selectedDoc, setSelectedDoc] = useState<Document | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // Filters
   const [searchQuery, setSearchQuery] = useState('')
-  useAuth()
+  const [selectedType, setSelectedType] = useState('')
+  const [selectedStatus, setSelectedStatus] = useState('')
+  const [selectedDepartment, setSelectedDepartment] = useState('')
 
+  // Forms
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false)
+
+  const [formData, setFormData] = useState({
+    title: '',
+    body: '',
+    type: 'rapport_incident',
+    department: 'general',
+    clearance: 0,
+    tags: [] as string[],
+    reference_id: '',
+  })
+
+  const [versions, setVersions] = useState<DocumentVersion[]>([])
+  const [logs, setLogs] = useState<DocumentLog[]>([])
+  const [permissions, setPermissions] = useState<DocumentPermission[]>([])
+  const [newPermission, setNewPermission] = useState({ type: 'role', target_id: '', allow: true })
+
+  const [activeTab, setActiveTab] = useState<'content' | 'versions' | 'logs' | 'permissions'>('content')
+
+  // Load documents
   useEffect(() => {
-    fetchDocuments()
-  }, [])
+    loadDocuments()
+  }, [searchQuery, selectedType, selectedStatus, selectedDepartment])
 
-  const fetchDocuments = async () => {
+  const loadDocuments = async () => {
     try {
       setLoading(true)
-      const response = await fetch(`${API_BASE_URL}/documents`, {
+      setError('')
+
+      const params = new URLSearchParams()
+      if (searchQuery) params.append('search', searchQuery)
+      if (selectedType) params.append('type', selectedType)
+      if (selectedStatus) params.append('status', selectedStatus)
+      if (selectedDepartment) params.append('department', selectedDepartment)
+
+      const response = await fetch(`${API_BASE_URL}/documents?${params}`, {
         headers: getAuthHeaders(),
       })
-      if (!response.ok) throw new Error('Erreur lors du chargement des documents')
+
+      if (!response.ok) throw new Error('Failed to load documents')
+
       const data = await response.json()
       setDocuments(data.documents || [])
-      setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur inconnue')
+      setError(err instanceof Error ? err.message : 'Error loading documents')
     } finally {
       setLoading(false)
     }
   }
 
-  const selectedDocument = documents.find(d => d.id === selectedDoc)
-  const filteredDocuments = documents.filter(doc =>
-    doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    doc.type.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const loadDocumentDetails = async (docId: number) => {
+    try {
+      // Load main document
+      const docRes = await fetch(`${API_BASE_URL}/documents/${docId}`, {
+        headers: getAuthHeaders(),
+      })
+      if (!docRes.ok) throw new Error('Failed to load document')
+      const doc = await docRes.json()
+      setSelectedDoc(doc)
 
-  const getClearanceColor = (level: number) => {
-    const colors: Record<number, { bg: string; text: string }> = {
-      1: { bg: 'rgba(16, 185, 129, 0.15)', text: '#34d399' },
-      2: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
-      3: { bg: 'rgba(245, 158, 11, 0.15)', text: '#fbbf24' },
-      4: { bg: 'rgba(239, 68, 68, 0.15)', text: '#f87171' },
-      5: { bg: 'rgba(139, 92, 246, 0.15)', text: '#a78bfa' }
+      // Load versions
+      const versRes = await fetch(`${API_BASE_URL}/documents/${docId}/versions`, {
+        headers: getAuthHeaders(),
+      })
+      if (versRes.ok) {
+        const { versions } = await versRes.json()
+        setVersions(versions)
+      }
+
+      // Load logs if author or admin
+      try {
+        const logsRes = await fetch(`${API_BASE_URL}/documents/${docId}/logs`, {
+          headers: getAuthHeaders(),
+        })
+        if (logsRes.ok) {
+          const { logs } = await logsRes.json()
+          setLogs(logs)
+        }
+      } catch {}
+
+      // Load permissions if author or admin
+      try {
+        const permsRes = await fetch(`${API_BASE_URL}/documents/${docId}/permissions`, {
+          headers: getAuthHeaders(),
+        })
+        if (permsRes.ok) {
+          const { permissions } = await permsRes.json()
+          setPermissions(permissions)
+        }
+      } catch {}
+
+      setActiveTab('content')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error loading document')
     }
-    return colors[level] || colors[1]
   }
 
+  const handleCreateDocument = async (e: React.FormEvent) => {
+    e.preventDefault()
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      })
+
+      if (!response.ok) throw new Error('Failed to create document')
+
+      setShowCreateModal(false)
+      setFormData({ title: '', body: '', type: 'rapport_incident', department: 'general', clearance: 0, tags: [], reference_id: '' })
+      await loadDocuments()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error creating document')
+    }
+  }
+
+  const handleEditDocument = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedDoc) return
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/${selectedDoc.id}`, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formData,
+          change_summary: `Modified by ${user?.username}`,
+        }),
+      })
+
+      if (!response.ok) throw new Error('Failed to update document')
+
+      setShowEditModal(false)
+      await loadDocumentDetails(selectedDoc.id)
+      await loadDocuments()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error updating document')
+    }
+  }
+
+  const handlePublish = async () => {
+    if (!selectedDoc) return
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/${selectedDoc.id}/publish`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      })
+
+      if (!response.ok) throw new Error('Failed to publish document')
+
+      await loadDocumentDetails(selectedDoc.id)
+      await loadDocuments()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error publishing document')
+    }
+  }
+
+  const handleArchive = async () => {
+    if (!selectedDoc) return
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/${selectedDoc.id}/archive`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      })
+
+      if (!response.ok) throw new Error('Failed to archive document')
+
+      await loadDocumentDetails(selectedDoc.id)
+      await loadDocuments()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error archiving document')
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!selectedDoc) return
+
+    if (!window.confirm('Soft delete this document? It can be restored by admin.')) return
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/${selectedDoc.id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      })
+
+      if (!response.ok) throw new Error('Failed to delete document')
+
+      setSelectedDoc(null)
+      await loadDocuments()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error deleting document')
+    }
+  }
+
+  const handleAddPermission = async () => {
+    if (!selectedDoc) return
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/${selectedDoc.id}/permissions`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          permission_type: newPermission.type,
+          target_id: newPermission.target_id,
+          is_allowed: newPermission.allow,
+        }),
+      })
+
+      if (!response.ok) throw new Error('Failed to add permission')
+
+      setNewPermission({ type: 'role', target_id: '', allow: true })
+      // Reload permissions
+      const permsRes = await fetch(`${API_BASE_URL}/documents/${selectedDoc.id}/permissions`, {
+        headers: getAuthHeaders(),
+      })
+      if (permsRes.ok) {
+        const { permissions } = await permsRes.json()
+        setPermissions(permissions)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error adding permission')
+    }
+  }
+
+  const getStatusBadgeColor = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return 'bg-gray-200 text-gray-800'
+      case 'published':
+        return 'bg-green-200 text-green-800'
+      case 'archived':
+        return 'bg-purple-200 text-purple-800'
+      case 'in_validation':
+        return 'bg-yellow-200 text-yellow-800'
+      case 'refused':
+        return 'bg-red-200 text-red-800'
+      default:
+        return 'bg-gray-200 text-gray-800'
+    }
+  }
+
+  const getClearanceBadgeColor = (clearance: number) => {
+    if (clearance === 0) return 'bg-blue-100 text-blue-800'
+    if (clearance <= 2) return 'bg-green-100 text-green-800'
+    if (clearance <= 4) return 'bg-yellow-100 text-yellow-800'
+    return 'bg-red-100 text-red-800'
+  }
+
+  const canEdit = selectedDoc && (selectedDoc.author_id === user?.id || user?.role === 'staff' || user?.role === 'direction')
+  const canPublish = selectedDoc && selectedDoc.status === 'draft' && (selectedDoc.author_id === user?.id || user?.role === 'staff')
+  const canArchive = selectedDoc && (selectedDoc.author_id === user?.id || user?.role === 'staff' || user?.role === 'direction')
+  const canDelete = selectedDoc && (selectedDoc.author_id === user?.id || user?.role === 'staff')
+  const canManagePerms = selectedDoc && (selectedDoc.author_id === user?.id || user?.role === 'staff')
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.5)', margin: 0 }}>
-          {documents.length} documents disponibles
-        </p>
-      </div>
+    <div className="flex h-full gap-4 p-4">
+      {/* Left: Document List */}
+      <div className="w-96 flex flex-col gap-4 border-r border-gray-300 pr-4">
+        <div>
+          <h2 className="text-xl font-bold mb-4">Documents</h2>
 
-      {/* Error */}
-      {error && (
-        <div style={{
-          padding: '12px 16px',
-          background: 'rgba(239, 68, 68, 0.1)',
-          border: '1px solid rgba(239, 68, 68, 0.2)',
-          borderRadius: '10px',
-          fontSize: '13px',
-          color: '#f87171'
-        }}>
-          {error}
-        </div>
-      )}
-
-      {/* Main Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px' }}>
-        {/* Documents List */}
-        <div style={{
-          background: 'rgba(255,255,255,0.02)',
-          border: '1px solid rgba(255,255,255,0.06)',
-          borderRadius: '12px',
-          overflow: 'hidden'
-        }}>
-          {/* Search */}
-          <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          {/* Filters */}
+          <div className="space-y-2 mb-4">
             <input
               type="text"
-              placeholder="Rechercher un document..."
+              placeholder="Search documents..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: '8px',
-                fontSize: '13px',
-                color: '#fff',
-                outline: 'none',
-                boxSizing: 'border-box'
-              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded"
             />
+
+            <select
+              value={selectedType}
+              onChange={(e) => setSelectedType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+            >
+              <option value="">All Types</option>
+              {DOC_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {DOC_TYPES_LABELS[type]}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+            >
+              <option value="">All Statuses</option>
+              <option value="draft">Draft</option>
+              <option value="published">Published</option>
+              <option value="archived">Archived</option>
+            </select>
+
+            <select
+              value={selectedDepartment}
+              onChange={(e) => setSelectedDepartment(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+            >
+              <option value="">All Departments</option>
+              {DEPARTMENTS.map((dept) => (
+                <option key={dept} value={dept}>
+                  {dept.charAt(0).toUpperCase() + dept.slice(1)}
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* List */}
-          <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
-            {loading ? (
-              <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
-                Chargement...
-              </div>
-            ) : filteredDocuments.length === 0 ? (
-              <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
-                Aucun document
-              </div>
-            ) : (
-              filteredDocuments.map((doc) => (
-                <div
-                  key={doc.id}
-                  onClick={() => setSelectedDoc(doc.id)}
-                  style={{
-                    padding: '14px 16px',
-                    borderBottom: '1px solid rgba(255,255,255,0.04)',
-                    cursor: 'pointer',
-                    background: selectedDoc === doc.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                    transition: 'background 0.15s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (selectedDoc !== doc.id) e.currentTarget.style.background = 'rgba(255,255,255,0.02)'
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedDoc !== doc.id) e.currentTarget.style.background = 'transparent'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: '13px',
-                        fontWeight: 500,
-                        color: '#fff',
-                        marginBottom: '4px'
-                      }}>
-                        {doc.title}
-                      </div>
-                      <div style={{
-                        fontSize: '12px',
-                        color: 'rgba(255,255,255,0.4)'
-                      }}>
-                        {doc.type}
-                      </div>
-                    </div>
-                    <div style={{
-                      fontSize: '10px',
-                      padding: '4px 8px',
-                      borderRadius: '6px',
-                      fontWeight: 500,
-                      ...getClearanceColor(doc.clearance),
-                      background: getClearanceColor(doc.clearance).bg,
-                      color: getClearanceColor(doc.clearance).text
-                    }}>
-                      CL-{doc.clearance}
-                    </div>
-                  </div>
-                  <div style={{
-                    fontSize: '11px',
-                    color: 'rgba(255,255,255,0.3)',
-                    marginTop: '8px'
-                  }}>
-                    {new Date(doc.created_at).toLocaleDateString('fr-FR')}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+          <button
+            onClick={() => {
+              setFormData({ title: '', body: '', type: 'rapport_incident', department: 'general', clearance: 0, tags: [], reference_id: '' })
+              setShowCreateModal(true)
+            }}
+            className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            + New Document
+          </button>
         </div>
 
-        {/* Document Details */}
-        <div style={{
-          background: 'rgba(255,255,255,0.02)',
-          border: '1px solid rgba(255,255,255,0.06)',
-          borderRadius: '12px',
-          overflow: 'hidden'
-        }}>
-          {selectedDocument ? (
-            <>
-              {/* Document Header */}
-              <div style={{
-                padding: '24px',
-                borderBottom: '1px solid rgba(255,255,255,0.06)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <h3 style={{
-                      fontSize: '18px',
-                      fontWeight: 600,
-                      color: '#fff',
-                      margin: 0
-                    }}>
-                      {selectedDocument.title}
-                    </h3>
-                    <p style={{
-                      fontSize: '13px',
-                      color: 'rgba(255,255,255,0.4)',
-                      margin: '8px 0 0'
-                    }}>
-                      {selectedDocument.type} • {new Date(selectedDocument.created_at).toLocaleDateString('fr-FR')}
-                    </p>
-                  </div>
-                  <div style={{
-                    padding: '6px 12px',
-                    borderRadius: '20px',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    background: getClearanceColor(selectedDocument.clearance).bg,
-                    color: getClearanceColor(selectedDocument.clearance).text
-                  }}>
-                    Clearance {selectedDocument.clearance}
-                  </div>
-                </div>
-              </div>
-
-              {/* Document Content */}
-              <div style={{ padding: '24px' }}>
-                <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '12px' }}>
-                  Contenu
-                </label>
-                <div style={{
-                  padding: '20px',
-                  background: 'rgba(255,255,255,0.02)',
-                  border: '1px solid rgba(255,255,255,0.04)',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  color: 'rgba(255,255,255,0.8)',
-                  lineHeight: 1.7,
-                  whiteSpace: 'pre-wrap',
-                  maxHeight: '400px',
-                  overflowY: 'auto'
-                }}>
-                  {selectedDocument.body}
-                </div>
-              </div>
-            </>
+        {/* Document List */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <p className="text-gray-500">Loading...</p>
+          ) : documents.length === 0 ? (
+            <p className="text-gray-500">No documents found</p>
           ) : (
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '400px',
-              color: 'rgba(255,255,255,0.3)'
-            }}>
-              <div style={{ fontSize: '48px', marginBottom: '16px', opacity: 0.3 }}>◎</div>
-              <p style={{ fontSize: '14px' }}>Sélectionnez un document</p>
+            <div className="space-y-2">
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  onClick={() => loadDocumentDetails(doc.id)}
+                  className={`p-3 border border-gray-300 rounded cursor-pointer hover:bg-blue-50 ${
+                    selectedDoc?.id === doc.id ? 'bg-blue-100 border-blue-500' : ''
+                  }`}
+                >
+                  <div className="font-semibold text-sm truncate">{doc.title}</div>
+                  <div className="text-xs text-gray-600">by {doc.author_username}</div>
+                  <div className="flex gap-2 mt-2">
+                    <span className={`text-xs px-2 py-1 rounded ${getStatusBadgeColor(doc.status)}`}>
+                      {doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
+                    </span>
+                    <span className={`text-xs px-2 py-1 rounded ${getClearanceBadgeColor(doc.clearance)}`}>
+                      L{doc.clearance}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
       </div>
+
+      {/* Right: Document Details */}
+      {selectedDoc ? (
+        <div className="flex-1 flex flex-col gap-4">
+          <div className="flex justify-between items-start">
+            <div>
+              <h1 className="text-2xl font-bold">{selectedDoc.title}</h1>
+              <p className="text-gray-600">
+                by {selectedDoc.author_username} • {new Date(selectedDoc.created_at).toLocaleDateString()}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <span className={`px-3 py-1 rounded ${getStatusBadgeColor(selectedDoc.status)}`}>
+                {selectedDoc.status.charAt(0).toUpperCase() + selectedDoc.status.slice(1)}
+              </span>
+              <span className={`px-3 py-1 rounded ${getClearanceBadgeColor(selectedDoc.clearance)}`}>
+                Level {selectedDoc.clearance}
+              </span>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-2">
+            {canEdit && (
+              <button
+                onClick={() => {
+                  setFormData({
+                    title: selectedDoc.title,
+                    body: selectedDoc.body,
+                    type: selectedDoc.type,
+                    department: selectedDoc.department,
+                    clearance: selectedDoc.clearance,
+                    tags: selectedDoc.tags,
+                    reference_id: '',
+                  })
+                  setShowEditModal(true)
+                }}
+                className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600"
+              >
+                ✏️ Edit
+              </button>
+            )}
+
+            {canPublish && (
+              <button
+                onClick={handlePublish}
+                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+              >
+                📤 Publish
+              </button>
+            )}
+
+            {canArchive && (
+              <button
+                onClick={handleArchive}
+                className="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600"
+              >
+                📦 Archive
+              </button>
+            )}
+
+            {canDelete && (
+              <button
+                onClick={handleDelete}
+                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+              >
+                🗑️ Delete
+              </button>
+            )}
+
+            {canManagePerms && (
+              <button
+                onClick={() => setShowPermissionsModal(true)}
+                className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+              >
+                🔒 Permissions
+              </button>
+            )}
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-2 border-b border-gray-300">
+            {(['content', 'versions', 'logs', 'permissions'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 border-b-2 ${
+                  activeTab === tab ? 'border-blue-500 text-blue-600 font-semibold' : 'border-transparent text-gray-600'
+                }`}
+              >
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          {/* Content Tab */}
+          {activeTab === 'content' && (
+            <div className="flex-1 overflow-y-auto">
+              <div className="prose prose-sm max-w-none">
+                <p className="text-sm text-gray-600 mb-2">
+                  <strong>Type:</strong> {DOC_TYPES_LABELS[selectedDoc.type] || selectedDoc.type}
+                </p>
+                <p className="text-sm text-gray-600 mb-2">
+                  <strong>Department:</strong> {selectedDoc.department}
+                </p>
+                {selectedDoc.tags.length > 0 && (
+                  <div className="mb-4">
+                    <strong className="text-sm">Tags:</strong>
+                    <div className="flex gap-2 mt-1 flex-wrap">
+                      {selectedDoc.tags.map((tag) => (
+                        <span key={tag} className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="border-t pt-4 mt-4 whitespace-pre-wrap">{selectedDoc.body}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Versions Tab */}
+          {activeTab === 'versions' && (
+            <div className="flex-1 overflow-y-auto">
+              {versions.length === 0 ? (
+                <p className="text-gray-500">No versions</p>
+              ) : (
+                <div className="space-y-3">
+                  {versions.map((v) => (
+                    <div key={v.id} className="border border-gray-300 p-3 rounded">
+                      <p className="font-semibold">v{v.version}</p>
+                      <p className="text-sm text-gray-600">{v.edited_by_username}</p>
+                      <p className="text-sm text-gray-600">{new Date(v.created_at).toLocaleString()}</p>
+                      {v.change_summary && <p className="text-sm mt-2">{v.change_summary}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Logs Tab */}
+          {activeTab === 'logs' && (
+            <div className="flex-1 overflow-y-auto">
+              {logs.length === 0 ? (
+                <p className="text-gray-500">No logs</p>
+              ) : (
+                <div className="space-y-3">
+                  {logs.map((l) => (
+                    <div key={l.id} className="border border-gray-300 p-3 rounded text-sm">
+                      <p className="font-semibold">{l.action.toUpperCase()}</p>
+                      <p className="text-gray-600">by {l.actor_username}</p>
+                      {l.details && <p className="text-gray-600">{l.details}</p>}
+                      <p className="text-xs text-gray-500">{new Date(l.created_at).toLocaleString()}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Permissions Tab */}
+          {activeTab === 'permissions' && canManagePerms && (
+            <div className="flex-1 overflow-y-auto">
+              <div className="space-y-3">
+                <h3 className="font-semibold">Permissions</h3>
+                {permissions.length === 0 ? (
+                  <p className="text-gray-500 text-sm">No specific permissions</p>
+                ) : (
+                  <div className="space-y-2">
+                    {permissions.map((p) => (
+                      <div key={p.id} className="flex justify-between items-center p-2 bg-gray-100 rounded text-sm">
+                        <span>
+                          {p.permission_type}: {p.target_id}
+                        </span>
+                        {p.is_allowed ? '✓' : '✗'}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {error && <div className="p-3 bg-red-100 text-red-800 rounded">{error}</div>}
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-gray-500">
+          Select a document to view details
+        </div>
+      )}
+
+      {/* Create Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg max-w-2xl w-full max-h-96 overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Create Document</h2>
+            <form onSubmit={handleCreateDocument} className="space-y-4">
+              <input
+                type="text"
+                placeholder="Title"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded"
+                required
+              />
+
+              <textarea
+                placeholder="Document body"
+                value={formData.body}
+                onChange={(e) => setFormData({ ...formData, body: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded h-40"
+                required
+              />
+
+              <select
+                value={formData.type}
+                onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded"
+              >
+                {DOC_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {DOC_TYPES_LABELS[type]}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={formData.department}
+                onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded"
+              >
+                {DEPARTMENTS.map((dept) => (
+                  <option key={dept} value={dept}>
+                    {dept.charAt(0).toUpperCase() + dept.slice(1)}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={formData.clearance}
+                onChange={(e) => setFormData({ ...formData, clearance: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded"
+              >
+                {CLEARANCE_LEVELS.map((level) => (
+                  <option key={level.value} value={level.value}>
+                    {level.label}
+                  </option>
+                ))}
+              </select>
+
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Create
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {showEditModal && selectedDoc && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg max-w-2xl w-full max-h-96 overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Edit Document</h2>
+            <form onSubmit={handleEditDocument} className="space-y-4">
+              <input
+                type="text"
+                placeholder="Title"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded"
+                required
+              />
+
+              <textarea
+                placeholder="Document body"
+                value={formData.body}
+                onChange={(e) => setFormData({ ...formData, body: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded h-40"
+                required
+              />
+
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600"
+                >
+                  Update
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Permissions Modal */}
+      {showPermissionsModal && selectedDoc && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg max-w-2xl w-full max-h-96 overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Manage Permissions</h2>
+
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold mb-2">Current Permissions</h3>
+                {permissions.map((p) => (
+                  <div key={p.id} className="flex justify-between items-center p-2 bg-gray-100 rounded text-sm mb-2">
+                    <span>
+                      {p.permission_type}: {p.target_id}
+                    </span>
+                    {p.is_allowed ? '✓' : '✗'}
+                  </div>
+                ))}
+              </div>
+
+              <hr />
+
+              <div>
+                <h3 className="font-semibold mb-2">Add Permission</h3>
+                <select
+                  value={newPermission.type}
+                  onChange={(e) => setNewPermission({ ...newPermission, type: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded mb-2"
+                >
+                  <option value="role">Role</option>
+                  <option value="department">Department</option>
+                  <option value="whitelist">Whitelist User</option>
+                  <option value="blacklist">Blacklist User</option>
+                </select>
+
+                <input
+                  type="text"
+                  placeholder="Target (role/dept/user_id)"
+                  value={newPermission.target_id}
+                  onChange={(e) => setNewPermission({ ...newPermission, target_id: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded mb-2"
+                />
+
+                <button
+                  onClick={handleAddPermission}
+                  className="w-full px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                >
+                  Add
+                </button>
+              </div>
+
+              <button
+                onClick={() => setShowPermissionsModal(false)}
+                className="w-full px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-export default Documents
+export default DocumentsPage

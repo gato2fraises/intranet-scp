@@ -38,35 +38,95 @@ export function initializeDatabase() {
           title TEXT NOT NULL,
           body TEXT NOT NULL,
           type TEXT NOT NULL,
-          clearance INTEGER NOT NULL,
           author_id INTEGER NOT NULL,
-          archived INTEGER DEFAULT 0,
+          department TEXT NOT NULL,
+          clearance INTEGER NOT NULL DEFAULT 0,
+          status TEXT DEFAULT 'draft',
+          is_deleted INTEGER DEFAULT 0,
+          tags TEXT DEFAULT '[]',
+          reference_id TEXT,
+          version INTEGER DEFAULT 1,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (author_id) REFERENCES users(id)
         )
       `)
 
-      // Messages table
+      // Document Versions table (for versioning/history)
+      db.run(`
+        CREATE TABLE IF NOT EXISTS document_versions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          document_id INTEGER NOT NULL,
+          version INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          edited_by INTEGER NOT NULL,
+          change_summary TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (document_id) REFERENCES documents(id),
+          FOREIGN KEY (edited_by) REFERENCES users(id),
+          UNIQUE(document_id, version)
+        )
+      `)
+
+      // Document Permissions table (role-based, department-based, user whitelist/blacklist)
+      db.run(`
+        CREATE TABLE IF NOT EXISTS document_permissions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          document_id INTEGER NOT NULL,
+          permission_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          is_allowed INTEGER DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (document_id) REFERENCES documents(id)
+        )
+      `)
+
+      // Document Audit Log
+      db.run(`
+        CREATE TABLE IF NOT EXISTS document_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          document_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          actor_id INTEGER NOT NULL,
+          details TEXT,
+          ip_address TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (document_id) REFERENCES documents(id),
+          FOREIGN KEY (actor_id) REFERENCES users(id)
+        )
+      `)
+
+      // Messages table (content only - no recipient or folder)
       db.run(`
         CREATE TABLE IF NOT EXISTS messages (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           sender_id INTEGER NOT NULL,
-          recipient_id INTEGER NOT NULL,
           subject TEXT NOT NULL,
           body TEXT NOT NULL,
-          folder TEXT DEFAULT 'inbox',
           priority TEXT DEFAULT 'information',
-          is_read INTEGER DEFAULT 0,
-          is_draft INTEGER DEFAULT 0,
-          archived INTEGER DEFAULT 0,
-          deleted INTEGER DEFAULT 0,
           sender_alias TEXT,
           thread_id INTEGER,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (sender_id) REFERENCES users(id),
-          FOREIGN KEY (recipient_id) REFERENCES users(id)
+          FOREIGN KEY (sender_id) REFERENCES users(id)
+        )
+      `)
+
+      // Mailboxes table (user-message associations with folder and read status)
+      db.run(`
+        CREATE TABLE IF NOT EXISTS mailboxes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          message_id INTEGER NOT NULL,
+          folder TEXT NOT NULL,
+          is_read INTEGER DEFAULT 0,
+          archived INTEGER DEFAULT 0,
+          deleted INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (message_id) REFERENCES messages(id),
+          UNIQUE(user_id, message_id, folder)
         )
       `)
 
@@ -183,6 +243,24 @@ export function initializeDatabase() {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           created_by INTEGER,
           FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (created_by) REFERENCES users(id)
+        )
+      `)
+
+      // Announcements table
+      db.run(`
+        CREATE TABLE IF NOT EXISTS announcements (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          priority TEXT DEFAULT 'medium',
+          scope TEXT DEFAULT 'global',
+          scope_value TEXT,
+          created_by INTEGER NOT NULL,
+          valid_from DATETIME DEFAULT CURRENT_TIMESTAMP,
+          valid_to DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (created_by) REFERENCES users(id)
         )
       `, (err) => {

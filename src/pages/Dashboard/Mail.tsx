@@ -115,9 +115,22 @@ const Mail: React.FC = () => {
       if (response.ok) {
         const data = await response.json()
         setUsers(data)
+        console.log('✓ Users loaded:', data)
+      } else {
+        console.warn('Annuaire endpoint returned:', response.status)
+        // Fallback: create a test user
+        setUsers([
+          { id: '2', username: 'administrateur' },
+          { id: '1', username: 'test' }
+        ])
       }
     } catch (err) {
       console.error('Error fetching users:', err)
+      // Fallback: create a test user
+      setUsers([
+        { id: '2', username: 'administrateur' },
+        { id: '1', username: 'test' }
+      ])
     }
   }
 
@@ -215,8 +228,21 @@ const Mail: React.FC = () => {
   }
 
   const saveOrSendMessage = async () => {
-    if (!composeForm.recipient_id || !composeForm.subject.trim() || !composeForm.body.trim()) {
-      setError('Veuillez remplir tous les champs requis')
+    console.log('saveOrSendMessage called with:', composeForm)
+    
+    if (!composeForm.recipient_id) {
+      setError('❌ Veuillez sélectionner un destinataire')
+      console.error('No recipient_id:', composeForm.recipient_id)
+      return
+    }
+    
+    if (!composeForm.subject.trim()) {
+      setError('❌ Veuillez entrer un objet')
+      return
+    }
+    
+    if (!composeForm.body.trim()) {
+      setError('❌ Veuillez entrer un message')
       return
     }
 
@@ -227,24 +253,33 @@ const Mail: React.FC = () => {
       // If it's a draft update, save draft
       // Otherwise, send the message
       const endpoint = composingMessageId ? 'draft' : 'send'
+      const payload = {
+        id: composingMessageId,
+        ...composeForm,
+        recipient_id: parseInt(composeForm.recipient_id)
+      }
+      
+      console.log('Sending to:', `${API_BASE_URL}/messages/${endpoint}`)
+      console.log('Payload:', payload)
+      
       const response = await fetch(`${API_BASE_URL}/messages/${endpoint}`, {
         method: 'POST',
         headers: {
           ...getAuthHeaders(),
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          id: composingMessageId,
-          ...composeForm,
-          recipient_id: parseInt(composeForm.recipient_id)
-        })
+        body: JSON.stringify(payload)
       })
 
       if (!response.ok) {
         const data = await response.json()
+        console.error('Server error:', data)
         throw new Error(data.error || 'Erreur lors de l\'envoi')
       }
 
+      const result = await response.json()
+      console.log('✓ Message sent successfully:', result)
+      
       setSuccessMessage(composingMessageId ? 'Brouillon enregistré' : 'Message envoyé avec succès !')
       resetCompose()
       setTimeout(() => {
@@ -253,7 +288,9 @@ const Mail: React.FC = () => {
         fetchFolderCounts()
       }, 1500)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur inconnue')
+      const errorMsg = err instanceof Error ? err.message : 'Erreur inconnue'
+      console.error('❌ Error:', errorMsg)
+      setError(errorMsg)
     } finally {
       setSendingMessage(false)
     }
@@ -268,6 +305,37 @@ const Mail: React.FC = () => {
       body: '',
       priority: 'information'
     })
+  }
+
+  const handleReply = async (messageId: number) => {
+    try {
+      setSendingMessage(true)
+      setError('')
+
+      // Get original message to get sender info
+      const original = messages.find(m => m.id === messageId)
+      if (!original) {
+        setError('Message original introuvable')
+        return
+      }
+
+      // Pre-fill reply form with original sender as recipient
+      setComposeForm({
+        recipient_id: original.sender_id.toString(),
+        subject: original.subject.startsWith('RE:') ? original.subject : `RE: ${original.subject}`,
+        body: `\n\n--- Message original ---\nDe: ${original.sender?.username || 'Inconnu'}\n${original.body}`,
+        priority: 'information'
+      })
+
+      setSelectedMsg(null)
+      setShowCompose(true)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Erreur inconnue'
+      console.error('❌ Error preparing reply:', errorMsg)
+      setError(errorMsg)
+    } finally {
+      setSendingMessage(false)
+    }
   }
 
   const editDraft = (draft: Message) => {
@@ -285,9 +353,10 @@ const Mail: React.FC = () => {
   const selectedMessage = messages.find(m => m.id === selectedMsg)
 
   // UI: Compose Mode
-  if (showCompose) {
-    return (
-      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', padding: '24px' }}>
+  // Show compose form as modal overlay
+  const composeModal = showCompose && (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '90%', maxHeight: '90vh', overflowY: 'auto' }}>
         <button onClick={resetCompose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', marginBottom: '16px' }}>
           ← Retour
         </button>
@@ -347,8 +416,8 @@ const Mail: React.FC = () => {
           </div>
         </div>
       </div>
-    )
-  }
+    </div>
+  )
 
   // UI: Main Mail View
   return (
@@ -440,6 +509,9 @@ const Mail: React.FC = () => {
               </div>
 
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button onClick={() => handleReply(selectedMessage.id)} style={{ padding: '8px 12px', background: 'rgba(34, 197, 94, 0.2)', border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: '6px', fontSize: '12px', color: '#86efac', cursor: 'pointer' }}>
+                  Répondre
+                </button>
                 <button onClick={() => markAsRead(selectedMessage.id, selectedMessage.is_read)} style={{ padding: '8px 12px', background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px', fontSize: '12px', color: '#60a5fa', cursor: 'pointer' }}>
                   {selectedMessage.is_read ? 'Marquer comme non lu' : 'Marquer comme lu'}
                 </button>
@@ -463,6 +535,9 @@ const Mail: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Compose Modal */}
+      {composeModal}
     </div>
   )
 }

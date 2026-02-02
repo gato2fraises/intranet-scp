@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { useNavigate } from 'react-router-dom'
+import { AlertCircle, Mail, FileText, Users, Settings, Clock, CheckCircle } from 'lucide-react'
 import Documents from './Dashboard/Documents'
 import Mail from './Dashboard/Mail'
 import RH from './Dashboard/RH'
@@ -8,6 +10,41 @@ import Annuaire from './Dashboard/Annuaire'
 import Modules from './Dashboard/Modules'
 
 type TabType = 'overview' | 'documents' | 'mail' | 'annuaire' | 'rh' | 'staff' | 'modules'
+
+interface DashboardData {
+  userInfo: {
+    id: number
+    username: string
+    role: string
+    department: string
+    clearance: number
+    status: 'active' | 'suspended'
+    sessionStartTime: string
+  }
+  modulesStatus: Record<string, string>
+  messagingIndicators: {
+    unread: number
+    receivedPeriod: number
+    sentPeriod: number
+  }
+  documentIndicators: {
+    created: number
+    recentlyViewed: number
+    pendingValidation: number
+  }
+  recentActivity: {
+    recentMessages: any[]
+    recentDocuments: any[]
+    systemNotifications: any[]
+  }
+  announcements: any[]
+  quickActions: Array<{
+    id: string
+    label: string
+    icon: string
+    action: string
+  }>
+}
 
 const MENU_ITEMS = [
   { id: 'overview' as TabType, label: 'Tableau de bord', icon: '◉' },
@@ -36,65 +73,215 @@ const StatCard: React.FC<{ label: string; value: string | number; accent?: strin
 )
 
 // Overview component
-const Overview: React.FC<{ user: any }> = ({ user }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-    {/* Welcome */}
-    <div>
-      <h2 style={{ fontSize: '24px', fontWeight: 600, color: '#fff', marginBottom: '8px' }}>
-        Bienvenue, {user.username}
-      </h2>
-      <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.5)' }}>
-        Voici un aperçu de votre activité sur l'intranet.
-      </p>
-    </div>
+const Overview: React.FC<{ dashboardData: DashboardData; user: any }> = ({ dashboardData, user }) => {
+  const navigate = useNavigate()
 
-    {/* Stats Grid */}
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-      <StatCard label="Clearance" value={`Niveau ${user.clearance}`} accent="#10b981" />
-      <StatCard label="Département" value={user.department || 'Non assigné'} accent="#8b5cf6" />
-    </div>
+  const getStatusBadgeColor = (status: string) => {
+    switch (status) {
+      case 'actif':
+        return 'bg-green-100 text-green-800'
+      case 'maintenance':
+        return 'bg-yellow-100 text-yellow-800'
+      case 'desactive':
+        return 'bg-gray-100 text-gray-800'
+      default:
+        return 'bg-gray-100 text-gray-800'
+    }
+  }
 
-    {/* Quick Info */}
-    <div style={{
-      background: 'rgba(255,255,255,0.02)',
-      border: '1px solid rgba(255,255,255,0.06)',
-      borderRadius: '12px',
-      padding: '24px'
-    }}>
-      <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#fff', marginBottom: '16px' }}>
-        Informations du compte
-      </h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>Identifiant</span>
-          <span style={{ color: '#fff', fontSize: '14px', fontWeight: 500 }}>{user.username}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>Rôle</span>
-          <span style={{ color: '#fff', fontSize: '14px', fontWeight: 500, textTransform: 'capitalize' }}>{user.role}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>Département</span>
-          <span style={{ color: '#fff', fontSize: '14px', fontWeight: 500 }}>{user.department || '—'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>Statut</span>
-          <span style={{ color: '#10b981', fontSize: '14px', fontWeight: 500 }}>● Actif</span>
+  const getRoleColor = (role: string) => {
+    switch (role) {
+      case 'staff':
+        return 'bg-red-100 text-red-800'
+      case 'direction':
+        return 'bg-purple-100 text-purple-800'
+      case 'scientifique':
+        return 'bg-blue-100 text-blue-800'
+      case 'securite':
+        return 'bg-orange-100 text-orange-800'
+      case 'administration':
+        return 'bg-green-100 text-green-800'
+      default:
+        return 'bg-gray-100 text-gray-800'
+    }
+  }
+
+  const getAnnouncementPriorityColor = (priority: string) => {
+    switch (priority) {
+      case 'critical':
+        return 'border-l-4 border-red-500 bg-red-50'
+      case 'high':
+        return 'border-l-4 border-orange-500 bg-orange-50'
+      case 'medium':
+        return 'border-l-4 border-yellow-500 bg-yellow-50'
+      default:
+        return 'border-l-4 border-blue-500 bg-blue-50'
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+      {/* Messaging Indicators */}
+      <div>
+        <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: '16px' }}>
+          📧 Messagerie
+        </h3>
+        <div className="grid grid-cols-3 gap-3">
+          <StatCard label="Non lus" value={dashboardData.messagingIndicators.unread} accent="#3b82f6" />
+          <StatCard label="Reçus (7j)" value={dashboardData.messagingIndicators.receivedPeriod} accent="#10b981" />
+          <StatCard label="Envoyés (7j)" value={dashboardData.messagingIndicators.sentPeriod} accent="#8b5cf6" />
         </div>
       </div>
+
+      {/* Document Indicators */}
+      <div>
+        <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: '16px' }}>
+          📄 Documents
+        </h3>
+        <div className="grid grid-cols-3 gap-3">
+          <StatCard label="Créés" value={dashboardData.documentIndicators.created} accent="#10b981" />
+          <StatCard label="Consultés (7j)" value={dashboardData.documentIndicators.recentlyViewed} accent="#f59e0b" />
+          {dashboardData.documentIndicators.pendingValidation > 0 && (
+            <StatCard label="En validation" value={dashboardData.documentIndicators.pendingValidation} accent="#ef4444" />
+          )}
+        </div>
+      </div>
+
+      {/* Modules Status */}
+      <div>
+        <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: '16px' }}>
+          ⚙️ État des modules
+        </h3>
+        <div className="grid grid-cols-5 gap-3">
+          {Object.entries(dashboardData.modulesStatus).map(([module, status]) => (
+            <div key={module} className="p-3 rounded-lg bg-opacity-5" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '8px', textTransform: 'capitalize' }}>{module}</p>
+              <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
+                status === 'actif' ? 'bg-green-500 text-white' :
+                status === 'maintenance' ? 'bg-yellow-500 text-white' :
+                'bg-gray-500 text-white'
+              }`}>
+                {status}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Recent Activity */}
+      {(dashboardData.recentActivity.recentMessages.length > 0 || dashboardData.recentActivity.recentDocuments.length > 0) && (
+        <div className="grid grid-cols-2 gap-6">
+          {/* Recent Messages */}
+          {dashboardData.recentActivity.recentMessages.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', padding: '20px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#fff', marginBottom: '16px' }}>📨 Messages récents</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {dashboardData.recentActivity.recentMessages.slice(0, 3).map((msg) => (
+                  <div key={msg.id} style={{ padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
+                    <p style={{ fontSize: '13px', fontWeight: 500, color: '#fff', marginBottom: '4px' }}>{msg.subject}</p>
+                    <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>De: {msg.sender_username}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recent Documents */}
+          {dashboardData.recentActivity.recentDocuments.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', padding: '20px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#fff', marginBottom: '16px' }}>📋 Documents récents</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {dashboardData.recentActivity.recentDocuments.slice(0, 3).map((doc) => (
+                  <div key={doc.id} style={{ padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
+                    <p style={{ fontSize: '13px', fontWeight: 500, color: '#fff', marginBottom: '4px' }}>{doc.title}</p>
+                    <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>Type: {doc.type}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Announcements */}
+      {dashboardData.announcements.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: '16px' }}>
+            📢 Annonces
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {dashboardData.announcements.map((announcement) => (
+              <div
+                key={announcement.id}
+                style={{
+                  padding: '16px',
+                  borderLeft: `4px solid ${
+                    announcement.priority === 'critical' ? '#ef4444' :
+                    announcement.priority === 'high' ? '#f59e0b' :
+                    announcement.priority === 'medium' ? '#eab308' :
+                    '#3b82f6'
+                  }`,
+                  background: 'rgba(255,255,255,0.02)',
+                  borderRadius: '8px',
+                  border: `1px solid rgba(255,255,255,0.06)`
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: 600, color: '#fff', margin: 0 }}>{announcement.title}</h4>
+                  <span style={{ fontSize: '11px', padding: '4px 8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase' }}>
+                    {announcement.priority}
+                  </span>
+                </div>
+                <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)', margin: '8px 0 0 0' }}>{announcement.content}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
-  </div>
-)
+  )
+}
 
 export const Dashboard: React.FC = () => {
-  const { user, logout } = useAuth()
+  const { user, logout, token } = useAuth()
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [time, setTime] = useState(new Date())
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const API_BASE_URL = 'http://localhost:3001'
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (!token || !user) return
+
+    const fetchDashboardData = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/dashboard`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+
+        if (!response.ok) throw new Error('Failed to fetch dashboard data')
+
+        const result = await response.json()
+        setDashboardData(result.data)
+      } catch (err) {
+        console.error('Dashboard fetch error:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchDashboardData()
+  }, [token, user])
 
   if (!user) return null
 
@@ -317,7 +504,12 @@ export const Dashboard: React.FC = () => {
 
         {/* Content Area */}
         <div style={{ flex: 1, padding: '32px', overflowY: 'auto' }}>
-          {activeTab === 'overview' && <Overview user={user} />}
+          {activeTab === 'overview' && !loading && dashboardData && <Overview dashboardData={dashboardData} user={user} />}
+          {activeTab === 'overview' && loading && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px' }}>
+              <span style={{ color: 'rgba(255,255,255,0.5)' }}>Chargement...</span>
+            </div>
+          )}
           {activeTab === 'documents' && <Documents />}
           {activeTab === 'mail' && <Mail />}
           {activeTab === 'annuaire' && <Annuaire />}
