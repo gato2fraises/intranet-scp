@@ -34,9 +34,10 @@ const Mail: React.FC = () => {
     body: ''
   })
   const [successMessage, setSuccessMessage] = useState('')
-  useAuth()
+  const { user } = useAuth()
 
   useEffect(() => {
+    console.log('🔵 Mail component mounted, user:', user)
     fetchMessages()
     fetchUsers()
   }, [])
@@ -58,15 +59,21 @@ const Mail: React.FC = () => {
   const fetchMessages = async () => {
     try {
       setLoading(true)
+      console.log('📧 Fetching messages...')
+      const token = localStorage.getItem('token')
+      console.log('🔑 Token exists:', !!token)
       const response = await fetch(`${API_BASE_URL}/messages/inbox`, {
         headers: getAuthHeaders(),
       })
+      console.log('📬 Response status:', response.status)
       if (!response.ok) throw new Error('Erreur lors du chargement des messages')
       const data = await response.json()
+      console.log('📨 Messages received:', data)
       // Backend retourne directement un array
       setMessages(Array.isArray(data) ? data : (data.messages || []))
       setError('')
     } catch (err) {
+      console.error('❌ Error fetching messages:', err)
       setError(err instanceof Error ? err.message : 'Erreur inconnue')
     } finally {
       setLoading(false)

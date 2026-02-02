@@ -55,9 +55,16 @@ export function initializeDatabase() {
           recipient_id INTEGER NOT NULL,
           subject TEXT NOT NULL,
           body TEXT NOT NULL,
+          folder TEXT DEFAULT 'inbox',
+          priority TEXT DEFAULT 'information',
           is_read INTEGER DEFAULT 0,
+          is_draft INTEGER DEFAULT 0,
           archived INTEGER DEFAULT 0,
+          deleted INTEGER DEFAULT 0,
+          sender_alias TEXT,
+          thread_id INTEGER,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (sender_id) REFERENCES users(id),
           FOREIGN KEY (recipient_id) REFERENCES users(id)
         )
@@ -123,6 +130,60 @@ export function initializeDatabase() {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (user_id) REFERENCES users(id),
           UNIQUE(user_id, permission)
+        )
+      `)
+
+      // Message Aliases table
+      db.run(`
+        CREATE TABLE IF NOT EXISTS message_aliases (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT UNIQUE NOT NULL,
+          description TEXT,
+          owner_id INTEGER NOT NULL,
+          enabled INTEGER DEFAULT 1,
+          admin_only INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (owner_id) REFERENCES users(id)
+        )
+      `)
+
+      // User Alias Permissions table
+      db.run(`
+        CREATE TABLE IF NOT EXISTS user_alias_permissions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          alias_id INTEGER NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (alias_id) REFERENCES message_aliases(id),
+          UNIQUE(user_id, alias_id)
+        )
+      `)
+
+      // Message Attachments table
+      db.run(`
+        CREATE TABLE IF NOT EXISTS message_attachments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          message_id INTEGER NOT NULL,
+          document_id INTEGER NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (message_id) REFERENCES messages(id),
+          FOREIGN KEY (document_id) REFERENCES documents(id)
+        )
+      `)
+
+      // Anti-abuse restrictions
+      db.run(`
+        CREATE TABLE IF NOT EXISTS user_message_restrictions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          restriction_type TEXT NOT NULL,
+          reason TEXT,
+          blocked_until DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          created_by INTEGER,
+          FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (created_by) REFERENCES users(id)
         )
       `, (err) => {
         if (err) reject(err)

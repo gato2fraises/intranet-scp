@@ -16,6 +16,8 @@ import logRoutes from './routes/logs'
 import annuaireRoutes from './routes/annuaire'
 import moduleRoutes from './routes/modules'
 import permissionRoutes from './routes/permissions'
+import aliasesRoutes from './routes/aliases'
+import restrictionsRoutes from './routes/restrictions'
 
 dotenv.config()
 
@@ -43,10 +45,36 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' })
 })
 
+// Debug: Check all messages
+app.get('/api/debug/messages-all', async (req, res) => {
+  try {
+    const messages = await queryAsync<any>(
+      `SELECT m.id, m.sender_id, m.recipient_id, m.subject, u.username as sender
+       FROM messages m
+       JOIN users u ON m.sender_id = u.id`
+    )
+    res.json(messages)
+  } catch (err) {
+    res.status(500).json({ error: String(err) })
+  }
+})
+
+// Debug: Check users
+app.get('/api/debug/users-all', async (req, res) => {
+  try {
+    const users = await queryAsync<any>(`SELECT id, username FROM users`)
+    res.json(users)
+  } catch (err) {
+    res.status(500).json({ error: String(err) })
+  }
+})
+
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/documents', documentRoutes)
 app.use('/api/messages', messageRoutes)
+app.use('/api/message-aliases', aliasesRoutes)
+app.use('/api/message-restrictions', restrictionsRoutes)
 app.use('/api/rh', rhRoutes)
 app.use('/api/logs', logRoutes)
 app.use('/api/annuaire', annuaireRoutes)
