@@ -63,7 +63,8 @@ const Mail: React.FC = () => {
       })
       if (!response.ok) throw new Error('Erreur lors du chargement des messages')
       const data = await response.json()
-      setMessages(data.messages || [])
+      // Backend retourne directement un array
+      setMessages(Array.isArray(data) ? data : (data.messages || []))
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur inconnue')

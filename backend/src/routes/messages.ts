@@ -10,14 +10,24 @@ router.use(authMiddleware)
 router.get('/inbox', async (req: Request, res: Response) => {
   try {
     const messages = await queryAsync<any>(
-      `SELECT m.*, u.username as sender_name FROM messages m
+      `SELECT 
+        m.id, m.sender_id, m.recipient_id, m.subject, m.body, 
+        m.is_read, m.archived, m.created_at,
+        json_object('username', u.username) as sender
+       FROM messages m
        JOIN users u ON m.sender_id = u.id
        WHERE m.recipient_id = ? AND m.archived = 0
        ORDER BY m.created_at DESC`,
       [req.user!.id]
     )
 
-    res.json(messages)
+    // Parse sender JSON strings
+    const parsedMessages = messages.map((m: any) => ({
+      ...m,
+      sender: typeof m.sender === 'string' ? JSON.parse(m.sender) : m.sender
+    }))
+
+    res.json(parsedMessages)
   } catch (error) {
     console.error('Error fetching messages:', error)
     res.status(500).json({ error: 'Internal server error' })

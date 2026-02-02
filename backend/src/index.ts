@@ -4,6 +4,9 @@ import dotenv from 'dotenv'
 import { initializeDatabase } from './database'
 import { runAsync, getAsync } from './utils'
 import bcrypt from 'bcryptjs'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
 import authRoutes from './routes/auth'
 import documentRoutes from './routes/documents'
@@ -15,6 +18,9 @@ import moduleRoutes from './routes/modules'
 import permissionRoutes from './routes/permissions'
 
 dotenv.config()
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const initMarkerFile = path.join(__dirname, '../data/.initialized')
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -59,13 +65,11 @@ async function start() {
     console.log('📦 Initializing database...')
     await initializeDatabase()
 
-    // Create test user if not exists
-    const testUser = await getAsync<any>(
-      'SELECT id FROM users WHERE username = ?',
-      ['test']
-    ).catch(() => null)
+    // Check if this is the first initialization
+    const isFirstInit = !fs.existsSync(initMarkerFile)
 
-    if (!testUser) {
+    if (isFirstInit) {
+      // Create test user only on first init
       try {
         const hashedPassword = await bcrypt.hash('password', 10)
         await runAsync(
@@ -79,15 +83,8 @@ async function start() {
           throw err
         }
       }
-    }
 
-    // Create admin user if not exists
-    const adminUser = await getAsync<any>(
-      'SELECT id FROM users WHERE username = ?',
-      ['administrateur@site.obsidian.fr']
-    ).catch(() => null)
-
-    if (!adminUser) {
+      // Create admin user only on first init
       try {
         const adminPassword = 'Obsidian#SecureAdmin2024@Fr'
         const hashedAdminPassword = await bcrypt.hash(adminPassword, 10)
@@ -99,12 +96,18 @@ async function start() {
         console.log('✓ Admin user created')
         console.log('  Email: administrateur@site.obsidian.fr')
         console.log('  Password: Obsidian#SecureAdmin2024@Fr')
-        console.log('  Role: Admin (Clearance 6)')
       } catch (err: any) {
         if (err.code !== 'SQLITE_CONSTRAINT') {
           throw err
         }
       }
+
+      // Create marker file to indicate initialization is complete
+      fs.mkdirSync(path.dirname(initMarkerFile), { recursive: true })
+      fs.writeFileSync(initMarkerFile, new Date().toISOString())
+      console.log('✓ Database initialized (users will not be recreated on restart)')
+    } else {
+      console.log('✓ Database already initialized (skipping seed)')
     }
 
     app.listen(PORT, () => {
