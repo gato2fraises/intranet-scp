@@ -120,16 +120,16 @@ const Mail: React.FC = () => {
         console.warn('Annuaire endpoint returned:', response.status)
         // Fallback: create a test user
         setUsers([
-          { id: '2', username: 'administrateur' },
-          { id: '1', username: 'test' }
+          { id: 2, username: 'administrateur', department: 'Administration' },
+          { id: 1, username: 'test', department: 'Recherche' }
         ])
       }
     } catch (err) {
       console.error('Error fetching users:', err)
       // Fallback: create a test user
       setUsers([
-        { id: '2', username: 'administrateur' },
-        { id: '1', username: 'test' }
+        { id: 2, username: 'administrateur', department: 'Administration' },
+        { id: 1, username: 'test', department: 'Recherche' }
       ])
     }
   }

@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Mail, FileText, Users, Settings, Clock, CheckCircle } from 'lucide-react'
 import Documents from './Dashboard/Documents'
 import Mail from './Dashboard/Mail'
 import RH from './Dashboard/RH'
@@ -73,9 +71,7 @@ const StatCard: React.FC<{ label: string; value: string | number; accent?: strin
 )
 
 // Overview component
-const Overview: React.FC<{ dashboardData: DashboardData; user: any }> = ({ dashboardData, user }) => {
-  const navigate = useNavigate()
-
+const Overview: React.FC<{ dashboardData: DashboardData }> = ({ dashboardData }) => {
   const getStatusBadgeColor = (status: string) => {
     switch (status) {
       case 'actif':
@@ -243,7 +239,8 @@ const Overview: React.FC<{ dashboardData: DashboardData; user: any }> = ({ dashb
 }
 
 export const Dashboard: React.FC = () => {
-  const { user, logout, token } = useAuth()
+  const { user, logout } = useAuth()
+  const token = localStorage.getItem('token')
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [time, setTime] = useState(new Date())
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
@@ -504,7 +501,7 @@ export const Dashboard: React.FC = () => {
 
         {/* Content Area */}
         <div style={{ flex: 1, padding: '32px', overflowY: 'auto' }}>
-          {activeTab === 'overview' && !loading && dashboardData && <Overview dashboardData={dashboardData} user={user} />}
+          {activeTab === 'overview' && !loading && dashboardData && <Overview dashboardData={dashboardData} />}
           {activeTab === 'overview' && loading && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px' }}>
               <span style={{ color: 'rgba(255,255,255,0.5)' }}>Chargement...</span>

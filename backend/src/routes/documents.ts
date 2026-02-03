@@ -223,7 +223,7 @@ router.post('/', async (req: Request, res: Response) => {
         'draft',
         JSON.stringify(tags || []),
         reference_id || null,
-        function (err: Error | null) {
+        function (this: any, err: Error | null) {
           if (err) reject(err)
           else resolve(this.lastID as number)
         }
